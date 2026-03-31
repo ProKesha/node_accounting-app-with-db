@@ -6,6 +6,52 @@ const { models } = require('./models/models');
 
 const { User, Expense, Category } = models;
 
+const expenseInclude = [
+  {
+    model: Category,
+    as: 'category',
+    attributes: ['id', 'name'],
+    required: false,
+  },
+];
+
+const serializeExpense = (expense) => {
+  const plainExpense = expense.get({ plain: true });
+  const categoryName = plainExpense.category?.name;
+
+  delete plainExpense.categoryId;
+  delete plainExpense.category;
+
+  if (categoryName !== undefined) {
+    plainExpense.category = categoryName;
+  }
+
+  return plainExpense;
+};
+
+const getCategoryId = async ({ categoryId, category }) => {
+  if (categoryId === undefined && category === undefined) {
+    return undefined;
+  }
+
+  if (categoryId !== undefined) {
+    const existingCategory = await Category.findByPk(Number(categoryId));
+
+    return existingCategory ? existingCategory.id : null;
+  }
+
+  if (!category) {
+    return null;
+  }
+
+  const [existingCategory] = await Category.findOrCreate({
+    where: { name: category },
+    defaults: { name: category },
+  });
+
+  return existingCategory.id;
+};
+
 const createServer = () => {
   const app = express();
 
@@ -83,7 +129,8 @@ const createServer = () => {
   });
 
   app.post('/expenses', async (req, res) => {
-    const { userId, spentAt, title, amount, category, note } = req.body;
+    const { userId, spentAt, title, amount, categoryId, category, note } =
+      req.body;
 
     if (!userId || !spentAt || !title || amount === undefined) {
       res.status(400).send('Required fields are missing');
@@ -99,21 +146,34 @@ const createServer = () => {
       return;
     }
 
+    const resolvedCategoryId = await getCategoryId({ categoryId, category });
+
+    if ((categoryId !== undefined || category !== undefined) && !resolvedCategoryId) {
+      res.status(400).send('Category not found');
+
+      return;
+    }
+
     const newExpense = await Expense.create({
       userId: Number(userId),
       spentAt,
       title,
       amount,
-      category,
+      categoryId: resolvedCategoryId,
       note,
     });
 
-    res.status(201).json(newExpense);
+    const createdExpense = await Expense.findByPk(newExpense.id, {
+      include: expenseInclude,
+    });
+
+    res.status(201).json(serializeExpense(createdExpense));
   });
 
   app.get('/expenses', async (req, res) => {
     const { userId, from, to, categories } = req.query;
     const where = {};
+    const include = [...expenseInclude];
 
     if (userId) {
       where.userId = Number(userId);
@@ -132,19 +192,30 @@ const createServer = () => {
     }
 
     if (categories) {
-      where.category = {
-        [Op.in]: categories.split(','),
+      include[0] = {
+        ...include[0],
+        required: true,
+        where: {
+          name: {
+            [Op.in]: categories.split(','),
+          },
+        },
       };
     }
 
-    const expenses = await Expense.findAll({ where });
+    const expenses = await Expense.findAll({
+      where,
+      include,
+    });
 
-    res.json(expenses);
+    res.json(expenses.map(serializeExpense));
   });
 
   app.get('/expenses/:expenseId', async (req, res) => {
     const expenseId = Number(req.params.expenseId);
-    const expense = await Expense.findByPk(expenseId);
+    const expense = await Expense.findByPk(expenseId, {
+      include: expenseInclude,
+    });
 
     if (!expense) {
       res.status(404).send('Expense not found');
@@ -152,12 +223,14 @@ const createServer = () => {
       return;
     }
 
-    res.json(expense);
+    res.json(serializeExpense(expense));
   });
 
   app.patch('/expenses/:expenseId', async (req, res) => {
     const expenseId = Number(req.params.expenseId);
-    const expense = await Expense.findByPk(expenseId);
+    const expense = await Expense.findByPk(expenseId, {
+      include: expenseInclude,
+    });
 
     if (!expense) {
       res.status(404).send('Expense not found');
@@ -165,7 +238,8 @@ const createServer = () => {
       return;
     }
 
-    const { userId, spentAt, title, amount, category, note } = req.body;
+    const { userId, spentAt, title, amount, categoryId, category, note } =
+      req.body;
     const updatedFields = {};
 
     if (userId !== undefined) {
@@ -192,8 +266,16 @@ const createServer = () => {
       updatedFields.amount = amount;
     }
 
-    if (category !== undefined) {
-      updatedFields.category = category;
+    const resolvedCategoryId = await getCategoryId({ categoryId, category });
+
+    if (categoryId !== undefined || category !== undefined) {
+      if (!resolvedCategoryId && category !== null) {
+        res.status(400).send('Category not found');
+
+        return;
+      }
+
+      updatedFields.categoryId = resolvedCategoryId;
     }
 
     if (note !== undefined) {
@@ -202,7 +284,11 @@ const createServer = () => {
 
     await expense.update(updatedFields);
 
-    res.json(expense);
+    const updatedExpense = await Expense.findByPk(expenseId, {
+      include: expenseInclude,
+    });
+
+    res.json(serializeExpense(updatedExpense));
   });
 
   app.delete('/expenses/:expenseId', async (req, res) => {

@@ -10,9 +10,20 @@ User.hasMany(Expense, {
   onDelete: 'CASCADE',
 });
 
+Category.hasMany(Expense, {
+  foreignKey: 'categoryId',
+  as: 'expenses',
+  onDelete: 'SET NULL',
+});
+
 Expense.belongsTo(User, {
   foreignKey: 'userId',
   as: 'user',
+});
+
+Expense.belongsTo(Category, {
+  foreignKey: 'categoryId',
+  as: 'category',
 });
 
 module.exports = {
