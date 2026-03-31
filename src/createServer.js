@@ -35,21 +35,21 @@ const getCategoryId = async ({ categoryId, category }) => {
   }
 
   if (categoryId !== undefined) {
-    const existingCategory = await Category.findByPk(Number(categoryId));
+    const categoryById = await Category.findByPk(Number(categoryId));
 
-    return existingCategory ? existingCategory.id : null;
+    return categoryById ? categoryById.id : null;
   }
 
   if (!category) {
     return null;
   }
 
-  const [existingCategory] = await Category.findOrCreate({
+  const [categoryByName] = await Category.findOrCreate({
     where: { name: category },
     defaults: { name: category },
   });
 
-  return existingCategory.id;
+  return categoryByName.id;
 };
 
 const createServer = () => {
@@ -148,7 +148,10 @@ const createServer = () => {
 
     const resolvedCategoryId = await getCategoryId({ categoryId, category });
 
-    if ((categoryId !== undefined || category !== undefined) && !resolvedCategoryId) {
+    if (
+      (categoryId !== undefined || category !== undefined) &&
+      !resolvedCategoryId
+    ) {
       res.status(400).send('Category not found');
 
       return;
